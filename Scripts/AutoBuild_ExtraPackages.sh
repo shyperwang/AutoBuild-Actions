@@ -33,7 +33,6 @@ coolsnowwolf/lede:master)
 	asus_rt-acrh17 | d-team_newifi-d2 | xiaoyu_xy-c5)
 		AddPackage git other luci-app-usb3disable rufengsuixing master
 		AddPackage git other openwrt-passwall xiaorouji main
-		AddPackage git other luci-theme-edge kiddin9 master
 	;;
 	x86_64)
 		AddPackage git other openwrt-passwall xiaorouji main

@@ -3,7 +3,7 @@
 # AutoBuild_Tools for Openwrt
 # Dependences: bash wget curl block-mount e2fsprogs smartmontools
 
-Version=V1.7.5
+Version=V1.7.7
 
 ECHO() {
 	case $1 in
@@ -23,16 +23,13 @@ do
 	clear
 	echo -e "$(cat /etc/banner)"
 	echo -e "
-AutoBuild 固件工具箱 ${Version} [$$] [${Tools_File}]
+${Grey}AutoBuild 固件工具箱 ${Version}${White} [$$] [${Tools_File}]
 
-1. USB 空间扩展
-2. Samba 设置
-3. 端口占用列表
+1. USB 空间扩展			6. 环境修复
+2. Samba 设置			7. 系统信息监控
+3. 端口占用列表			8. 在线设备列表
 4. 硬盘信息
 5. 网络检查
-6. 修复固件环境
-7. 系统信息监控
-8. 在线设备列表
 
 ${Grey}u. 固件更新
 ${Yellow}x. 更新脚本
@@ -76,14 +73,21 @@ ${White}q. 退出
 		[[ ! $(CHECK_PKG block) == true ]] && {
 			ECHO r "\n缺少相应依赖包,请先安装 [block-mount] !"
 			sleep 2
-		} || Samba_UI
+			return
+		}
+		[[ ! $(CHECK_PKG smbpasswd) == true ]] && {
+			ECHO r "\n缺少相应依赖包,请先安装 [samba] !"
+			sleep 2
+			return
+		}
+		Samba_UI
 	;;
 	3)
 		ECHO y "\nLoading Service Configuration ..."
 		Netstat1=${Tools_Cache}/Netstat1
 		Netstat2=${Tools_Cache}/Netstat2
 		ps_Info=${Tools_Cache}/ps_Info
-		rm -f ${Netstat2} && touch ${Netstat2}
+		rm -f ${Netstat2} && touch -a ${Netstat2}
 		netstat -ntupa | egrep ":::[0-9].+|0.0.0.0:[0-9]+|127.0.0.1:[0-9]+" | awk '{print $1" "$4" "$6" "$7}' | sed -r 's/0.0.0.0:/\1/;s/:::/\1/;s/127.0.0.1:/\1/;s/LISTEN/\1/' | sort | uniq > ${Netstat1}
 		ps -w > ${ps_Info}
 		local i=1;while :;do
@@ -102,6 +106,7 @@ ${White}q. 退出
 			echo -e "${Proto} ${Port} ${Service} ${PID} ${Task}" | egrep "tcp|udp" >> ${Netstat2}
 		done
 		clear
+		ECHO x "端口占用列表\n"
 		ECHO y "协议	   占用端口       服务名称        PID             进程信息"
 		local X;while read X;do
 			printf "%-10s %-14s %-15s %-15s %-10s\n" ${X}
@@ -137,6 +142,8 @@ ${White}q. 退出
 				ECHO r "Google 连接错误!"
 			;;
 			esac
+		else
+			ECHO r "\n缺少相应依赖包,请先安装 [curl] !"
 		fi
 		sleep 2
 	;;
@@ -157,7 +164,8 @@ ${White}q. 退出
 	8)
 		Sysinfo
 		clear
-		ECHO y "IP			MAC"
+		ECHO x "在线设备列表\n"
+		ECHO y "IP 地址			MAC 地址"
 		grep "br-lan" /proc/net/arp | grep "0x2" | grep -v "0x0" | grep "$(echo ${IPv4} | egrep -o "[0-9]+\.[0-9]+\.[0-9]+")" | awk '{print $1"\t\t"$4}'
 		ENTER
 	;;
@@ -219,7 +227,7 @@ USB_Info() {
 	rm -f ${Block_Info} ${Logic_Disk_List} ${Disk_Processed_List} ${Phy_Disk_List}
 	touch ${Disk_Processed_List}
 	block mount
-	block info | grep -v "mtdblock" | grep "sd[a-z][0-9]" > ${Block_Info}
+	block info | grep -v "mtdblock" | egrep "sd[a-z][0-9]|mmcblk" > ${Block_Info}
 	[[ -s ${Block_Info} ]] && {
 		cat ${Block_Info} | awk -F ':' '/sd/{print $1}' > ${Logic_Disk_List}
 		for Disk_Name in $(cat ${Logic_Disk_List})
@@ -229,24 +237,25 @@ USB_Info() {
 			[[ -z ${Logic_Mount} ]] && Logic_Mount="$(df | grep "${Disk_Name}" | awk '{print $6}' | awk 'NR==1')"
 			Logic_Format="$(grep "${Disk_Name}" ${Block_Info} | egrep -o 'TYPE="[0-9a-zA-Z].+' | awk -F '["]' '/TYPE/{print $2}')"
 			Logic_Available="$(df -h | grep "${Disk_Name}" | awk '{print $4}' | awk 'NR==1')"
+			[[ -z ${UUID} ]] && UUID='-'
 			[[ -z ${Logic_Format} ]] && Logic_Format='-'
 			[[ -z ${Logic_Mount} ]] && Logic_Mount='-'
 			[[ -z ${Logic_Available} ]] && Logic_Available='-'
 			echo "${Disk_Name}	${UUID}	${Logic_Format}	${Logic_Mount}	${Logic_Available}" >> ${Disk_Processed_List}
 		done
-		grep -o "/dev/sd[a-z]" ${Logic_Disk_List} | sort | uniq > ${Phy_Disk_List}
+		egrep -o "/dev/sd[a-z]|mmcblk" ${Logic_Disk_List} | sort | uniq > ${Phy_Disk_List}
 	}
 	echo -ne "\r                             \r"
 	return
 }
 
 AutoExpand_Core() {
-	ECHO r "\n警告: 操作开始后请不要中断任务或进行其他操作,否则可能导致设备数据丢失!"
-	ECHO r "固件更新将改变分区表,从而导致扩容失效,并且当前硬盘数据将会丢失!"
-	ECHO r "\n本操作将把设备 '$1' 格式化为 ext4 格式,请提前做好数据备份工作!"
-	read -p "是否执行格式化操作?[Y/n]:" Choose
+	ECHO r "\n警告: 操作开始后请不要中断任务或进行其他操作,否则可能导致设备无法开机"
+	ECHO r "      固件更新将改变分区表,从而导致扩容失效,当前硬盘上的数据可能会丢失"
+	echo -ne "\n${Yellow}本操作将把设备 '$1' 格式化为 ext4 格式,${White}"
+	read -p "是否确认执行格式化操作?[Y/n]:" Choose
 	[[ ${Choose} == [Yesyes] ]] && {
-		ECHO y "\n开始运行脚本 ..."
+		ECHO y "\n开始运行一键挂载脚本 ..."
 		sleep 2
 	} || return 0
 	echo "禁用自动挂载 ..."
@@ -281,7 +290,7 @@ AutoExpand_Core() {
 		exit 1
 	}
 	mount --bind / /tmp/introot || {
-		ECHO r "挂载 '/' 到 '/tmp/introot' 失败!"
+		ECHO r "绑定 '/' 到 '/tmp/introot' 失败!"
 		exit 1
 
 	}
@@ -308,13 +317,12 @@ config mount
 
 EOF
 	uci commit fstab
-	ECHO y "\n运行结束,外接设备 '$1' 已挂载到系统分区!\n"
+	ECHO y "\n运行结束,外接设备 '$1' 已挂载为系统根目录 '/'\n"
 	read -p "操作需要重启生效,是否立即重启?[Y/n]:" Choose
 	[[ ${Choose} == [Yesyes] ]] && {
 		ECHO g "\n正在重启设备,请耐心等待 ..."
 		sync
 		reboot
-		exit
 	} || exit
 }
 
@@ -328,9 +336,10 @@ Samba_UI() {
 		clear
 		ECHO x "Samba 工具箱\n"
 		echo "1. 自动生成 Samba 挂载点"
-		echo "2. 删除所有 Samba 挂载点"
-		echo "3. $([[ ${autoshare_Mode} == 1 ]] && echo 关闭 || echo 开启) Samba 自动共享"
-		echo "4. 设置 Samba 访问密码 $([ -s /etc/samba/smbpasswd ] && echo -e "${Yellow}[已设置]${White}")"
+		echo "2. 删除已有挂载点"
+		echo "3. $([[ ${autoshare_Mode} == 1 ]] && ECHO r 关闭 || ECHO y 开启) Samba 自动共享"
+		echo "4. 设置 Samba 访问密码 $([ -s /etc/samba/smbpasswd ] && ECHO y "[已设置]" || ECHO r "[未设置]")"
+		[ -s /etc/samba/smbpasswd ] && echo "5. 删除 Samba 密码"
 		echo -e "\nq. 返回\n"
 		read -p "请从上方选项中选择一个操作:" Choose
 		case ${Choose} in
@@ -390,14 +399,22 @@ EOF
 		;;
 		4)
 			sed -i '/invalid users/d' /etc/samba/smb.conf.template >/dev/null 2>&1
-			ECHO y "\n注意: 请连续输入两次密码,输入的密码不会显示,输入后回车即可!"
+			ECHO y "\n注意: 将为 root 用户设置密码,同时自动允许 root 用户进行访问,
+      请连续输入两次相同的密码,输入的内容不会显示,完成后回车即可!\n"
 			smbpasswd -a root
 			[[ $? == 0 ]] && {
-				ECHO y "\nSamba 访问密码设置成功!"
+				ECHO y "\n已为 root 用户设置 Samba 访问密码!"
 				/etc/init.d/samba restart
 			} || {
 				ECHO r "\nSamba 访问密码设置失败!"
 			}
+		;;
+		5)
+			if [ -s /etc/samba/smbpasswd ];then
+				smbpasswd -x root
+				ECHO y "\n已删除 Samba 访问密码!"
+				/etc/init.d/samba restart
+			fi
 		;;
 		q)
 			break
@@ -413,18 +430,17 @@ do
 	AutoUpdate_Version=$(awk 'NR==6' ${AutoUpdate_File} | awk -F '[="]+' '/Version/{print $2}')
 	clear
 	echo -e "$(cat /etc/banner)"
-	echo -e "AutoBuild 固件更新/AutoUpdate ${AutoUpdate_Version}\n
-${Yellow}1. 更新固件 [保留配置]
-${White}2. 更新固件 (强制刷入固件) [保留配置]
+	ECHO x "AutoBuild 固件更新/AutoUpdate ${AutoUpdate_Version}\n
+${Yellow}1. 更新固件 [保留配置]${White}
+2. 更新固件 (强制刷入固件) [保留配置]
 3. 不保留配置更新固件 [全新安装]
 4. 列出固件信息
 5. 清除固件下载缓存
 6. 更改 Github API 地址
-7. 指定 x86 设备下载 <UEFI | Legacy> 引导的固件
-8. 打印运行日志 (反馈问题)
-9. 检查运行环境
-10. 备份系统配置
-
+7. 打印运行日志 (反馈问题)
+8. 检查 AutoUpdate 运行环境
+9. 备份系统配置
+$([ $(${AutoUpdate_File} --var TARGET_BOARD) == x86 ] && echo "10. 指定下载 <UEFI | Legacy> 引导的固件\n")
 ${Yellow}x. 更新 [AutoUpdate] 脚本
 ${White}q. 返回\n"
 	read -p "请从上方选择一个操作:" Choose
@@ -467,22 +483,22 @@ ${White}q. 返回\n"
 		}
 	;;
 	7)
+		bash ${AutoUpdate_File} -L
+	;;
+	8)
+		bash ${AutoUpdate_File} --check
+	;;
+	9)
+		echo ""
+		read -p "请输入配置保存路径(回车即为当前路径):" BAK_PATH
+		bash ${AutoUpdate_File} --backup ${BAK_PATH}
+	;;
+	10)
 		echo ""
 		read -p "请输入你想要的启动方式[UEFI/Legacy]:" _BOOT
 		[[ -n ${_BOOT} ]] && bash ${AutoUpdate_File} -B ${_BOOT} || {
 			ECHO r "\n启动方式不能为空!"
 		}
-	;;
-	8)
-		bash ${AutoUpdate_File} -L
-	;;
-	9)
-		bash ${AutoUpdate_File} --check
-	;;
-	10)
-		echo ""
-		read -p "请输入配置保存路径(回车即为当前路径):" BAK_PATH
-		bash ${AutoUpdate_File} --backup ${BAK_PATH}
 	;;
 	esac
 	ENTER
@@ -493,13 +509,13 @@ SmartInfo_UI() {
 	USB_Info
 	[[ -s ${Phy_Disk_List} ]] && {
 		clear
-		smartctl -v | awk 'NR==1'
+		ECHO x "硬盘信息列表"
 		cat ${Phy_Disk_List} | while read Phy_Disk;do
 			SmartInfo_Core ${Phy_Disk}
 		done
 		ENTER
 	} || {
-		ECHO r "未检测到任何外接设备,请检查接口或插入 USB 设备!"
+		ECHO r "未检测到任何外接设备,请检查 USB 接口可用性或插入更多 USB 设备!"
 		sleep 2
 		return 1
 	}
@@ -658,7 +674,7 @@ Green="\e[32m"
 
 Tools_Cache=/tmp/AutoBuild_Tools
 Tools_File=$(cd $(dirname $0) && pwd)/AutoBuild_Tools.sh
-AutoUpdate_Path=/bin/AutoUpdate.sh
+AutoUpdate_File=/bin/AutoUpdate.sh
 [[ ! -d ${Tools_Cache} ]] && mkdir -p ${Tools_Cache}
-Github_Raw="https://ghproxy.com/https://raw.githubusercontent.com/Hyy2001X/AutoBuild-Actions/master"
+Github_Raw="https://ghproxy.com/https://raw.githubusercontent.com/shyperwang/AutoBuild-Actions/master"
 AutoBuild_Tools_UI
